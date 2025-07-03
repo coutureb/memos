@@ -1,30 +1,62 @@
-import { Dropdown, Menu, MenuButton, MenuItem } from "@mui/joy";
-import classNames from "classnames";
+import copy from "copy-to-clipboard";
+import {
+  ArchiveIcon,
+  ArchiveRestoreIcon,
+  BookmarkMinusIcon,
+  BookmarkPlusIcon,
+  CopyIcon,
+  Edit3Icon,
+  MoreVerticalIcon,
+  TrashIcon,
+  SquareCheckIcon,
+} from "lucide-react";
+import { observer } from "mobx-react-lite";
 import toast from "react-hot-toast";
 import { useLocation } from "react-router-dom";
-import Icon from "@/components/Icon";
+import { markdownServiceClient } from "@/grpcweb";
 import useNavigateTo from "@/hooks/useNavigateTo";
-import { extractMemoIdFromName, useMemoStore } from "@/store/v1";
-import { RowStatus } from "@/types/proto/api/v2/common";
-import { Memo } from "@/types/proto/api/v2/memo_service";
+import { cn } from "@/lib/utils";
+import { memoStore, userStore } from "@/store/v2";
+import { State } from "@/types/proto/api/v1/common";
+import { NodeType } from "@/types/proto/api/v1/markdown_service";
+import { Memo } from "@/types/proto/api/v1/memo_service";
 import { useTranslate } from "@/utils/i18n";
-import { showCommonDialog } from "./Dialog/CommonDialog";
-import showMemoEditorDialog from "./MemoEditor/MemoEditorDialog";
-import showShareMemoDialog from "./ShareMemoDialog";
+import { Popover, PopoverContent, PopoverTrigger } from "./ui/popover";
 
 interface Props {
   memo: Memo;
+  readonly?: boolean;
   className?: string;
-  hiddenActions?: ("edit" | "archive" | "delete" | "share" | "pin")[];
+  onEdit?: () => void;
 }
 
-const MemoActionMenu = (props: Props) => {
-  const { memo, hiddenActions } = props;
+const checkHasCompletedTaskList = (memo: Memo) => {
+  for (const node of memo.nodes) {
+    if (node.type === NodeType.LIST && node.listNode?.children && node.listNode?.children?.length > 0) {
+      for (let j = 0; j < node.listNode.children.length; j++) {
+        if (node.listNode.children[j].type === NodeType.TASK_LIST_ITEM && node.listNode.children[j].taskListItemNode?.complete) {
+          return true;
+        }
+      }
+    }
+  }
+  return false;
+};
+
+const MemoActionMenu = observer((props: Props) => {
+  const { memo, readonly } = props;
   const t = useTranslate();
   const location = useLocation();
   const navigateTo = useNavigateTo();
-  const memoStore = useMemoStore();
-  const isInMemoDetailPage = location.pathname.startsWith(`/m/${memo.name}`);
+  const hasCompletedTaskList = checkHasCompletedTaskList(memo);
+  const isInMemoDetailPage = location.pathname.startsWith(`/${memo.name}`);
+  const isComment = Boolean(memo.parent);
+  const isArchived = memo.state === State.ARCHIVED;
+
+  const memoUpdatedCallback = () => {
+    // Refresh user stats.
+    userStore.setStatsStateId();
+  };
 
   const handleTogglePinMemoBtnClick = async () => {
     try {
@@ -45,92 +77,162 @@ const MemoActionMenu = (props: Props) => {
           ["pinned"],
         );
       }
-    } catch (error) {
+    } catch {
       // do nth
     }
   };
 
   const handleEditMemoClick = () => {
-    showMemoEditorDialog({
-      memoId: extractMemoIdFromName(memo.name),
-      cacheKey: `${memo.name}-${memo.updateTime}`,
-    });
+    if (props.onEdit) {
+      props.onEdit();
+      return;
+    }
   };
 
-  const handleArchiveMemoClick = async () => {
+  const handleToggleMemoStatusClick = async () => {
+    const state = memo.state === State.ARCHIVED ? State.NORMAL : State.ARCHIVED;
+    const message = memo.state === State.ARCHIVED ? t("message.restored-successfully") : t("message.archived-successfully");
     try {
       await memoStore.updateMemo(
         {
           name: memo.name,
-          rowStatus: RowStatus.ARCHIVED,
+          state,
         },
-        ["row_status"],
+        ["state"],
       );
+      toast(message);
     } catch (error: any) {
+      toast.error(error.details);
       console.error(error);
-      toast.error(error.response.data.message);
       return;
     }
 
-    toast.success("Archived successfully");
     if (isInMemoDetailPage) {
-      navigateTo("/archived");
+      navigateTo(memo.state === State.ARCHIVED ? "/" : "/archived");
     }
+    memoUpdatedCallback();
+  };
+
+  const handleCopyLink = () => {
+    copy(`${window.location.origin}/${memo.name}`);
+    toast.success(t("message.succeed-copy-link"));
   };
 
   const handleDeleteMemoClick = async () => {
-    showCommonDialog({
-      title: t("memo.delete-memo"),
-      content: t("memo.delete-confirm"),
-      style: "danger",
-      dialogName: "delete-memo-dialog",
-      onConfirm: async () => {
-        await memoStore.deleteMemo(extractMemoIdFromName(memo.name));
-        toast.success("Deleted successfully");
-        if (isInMemoDetailPage) {
-          navigateTo("/");
+    const confirmed = window.confirm(t("memo.delete-confirm"));
+    if (confirmed) {
+      await memoStore.deleteMemo(memo.name);
+      toast.success(t("message.deleted-successfully"));
+      if (isInMemoDetailPage) {
+        navigateTo("/");
+      }
+      memoUpdatedCallback();
+    }
+  };
+
+  const handleRemoveCompletedTaskListItemsClick = async () => {
+    const confirmed = window.confirm(t("memo.remove-completed-task-list-items-confirm"));
+    if (confirmed) {
+      const newNodes = JSON.parse(JSON.stringify(memo.nodes));
+      for (const node of newNodes) {
+        if (node.type === NodeType.LIST && node.listNode?.children?.length > 0) {
+          const children = node.listNode.children;
+          for (let i = 0; i < children.length; i++) {
+            if (children[i].type === NodeType.TASK_LIST_ITEM && children[i].taskListItemNode?.complete) {
+              // Remove completed taskList item and next line breaks
+              children.splice(i, 1);
+              if (children[i]?.type === NodeType.LINE_BREAK) {
+                children.splice(i, 1);
+              }
+              i--;
+            }
+          }
         }
-      },
-    });
+      }
+      const { markdown } = await markdownServiceClient.restoreMarkdownNodes({ nodes: newNodes });
+      await memoStore.updateMemo(
+        {
+          name: memo.name,
+          content: markdown,
+        },
+        ["content"],
+      );
+      toast.success(t("message.remove-completed-task-list-items-successfully"));
+      memoUpdatedCallback();
+    }
   };
 
   return (
-    <Dropdown>
-      <MenuButton slots={{ root: "div" }}>
-        <span className={classNames("flex justify-center items-center rounded-full hover:opacity-70", props.className)}>
-          <Icon.MoreVertical className="w-4 h-4 mx-auto text-gray-500 dark:text-gray-400" />
+    <Popover>
+      <PopoverTrigger asChild>
+        <span className={cn("flex justify-center items-center rounded-full hover:opacity-70 cursor-pointer", props.className)}>
+          <MoreVerticalIcon className="w-4 h-4 mx-auto text-gray-500 dark:text-gray-400" />
         </span>
-      </MenuButton>
-      <Menu className="text-sm" size="sm" placement="bottom-end">
-        {!hiddenActions?.includes("pin") && (
-          <MenuItem onClick={handleTogglePinMemoBtnClick}>
-            {memo.pinned ? <Icon.BookmarkMinus className="w-4 h-auto" /> : <Icon.BookmarkPlus className="w-4 h-auto" />}
-            {memo.pinned ? t("common.unpin") : t("common.pin")}
-          </MenuItem>
-        )}
-        {!hiddenActions?.includes("edit") && (
-          <MenuItem onClick={handleEditMemoClick}>
-            <Icon.Edit3 className="w-4 h-auto" />
-            {t("common.edit")}
-          </MenuItem>
-        )}
-        {!hiddenActions?.includes("share") && (
-          <MenuItem onClick={() => showShareMemoDialog(extractMemoIdFromName(memo.name))}>
-            <Icon.Share className="w-4 h-auto" />
-            {t("common.share")}
-          </MenuItem>
-        )}
-        <MenuItem color="warning" onClick={handleArchiveMemoClick}>
-          <Icon.Archive className="w-4 h-auto" />
-          {t("common.archive")}
-        </MenuItem>
-        <MenuItem color="danger" onClick={handleDeleteMemoClick}>
-          <Icon.Trash className="w-4 h-auto" />
-          {t("common.delete")}
-        </MenuItem>
-      </Menu>
-    </Dropdown>
+      </PopoverTrigger>
+      <PopoverContent align="end" sideOffset={2}>
+        <div className="flex flex-col text-sm gap-0.5">
+          {!readonly && !isArchived && (
+            <>
+              {!isComment && (
+                <button
+                  onClick={handleTogglePinMemoBtnClick}
+                  className="flex items-center gap-2 px-2 py-1 text-left dark:text-zinc-300 hover:bg-gray-100 dark:hover:bg-zinc-700 outline-none rounded"
+                >
+                  {memo.pinned ? <BookmarkMinusIcon className="w-4 h-auto" /> : <BookmarkPlusIcon className="w-4 h-auto" />}
+                  {memo.pinned ? t("common.unpin") : t("common.pin")}
+                </button>
+              )}
+              <button
+                onClick={handleEditMemoClick}
+                className="flex items-center gap-2 px-2 py-1 text-left dark:text-zinc-300 hover:bg-gray-100 dark:hover:bg-zinc-700 outline-none rounded"
+              >
+                <Edit3Icon className="w-4 h-auto" />
+                {t("common.edit")}
+              </button>
+            </>
+          )}
+          {!isArchived && (
+            <button
+              onClick={handleCopyLink}
+              className="flex items-center gap-2 px-2 py-1 text-left dark:text-zinc-300 hover:bg-gray-100 dark:hover:bg-zinc-700 outline-none rounded"
+            >
+              <CopyIcon className="w-4 h-auto" />
+              {t("memo.copy-link")}
+            </button>
+          )}
+          {!readonly && (
+            <>
+              {!isArchived && !isComment && hasCompletedTaskList && (
+                <button
+                  onClick={handleRemoveCompletedTaskListItemsClick}
+                  className="flex items-center gap-2 px-2 py-1 text-left text-amber-600 dark:text-amber-400 hover:bg-gray-100 dark:hover:bg-zinc-700 outline-none rounded"
+                >
+                  <SquareCheckIcon className="w-4 h-auto" />
+                  {t("memo.remove-completed-task-list-items")}
+                </button>
+              )}
+              {!isComment && (
+                <button
+                  onClick={handleToggleMemoStatusClick}
+                  className="flex items-center gap-2 px-2 py-1 text-left text-amber-600 dark:text-amber-400 hover:bg-gray-100 dark:hover:bg-zinc-700 outline-none rounded"
+                >
+                  {isArchived ? <ArchiveRestoreIcon className="w-4 h-auto" /> : <ArchiveIcon className="w-4 h-auto" />}
+                  {isArchived ? t("common.restore") : t("common.archive")}
+                </button>
+              )}
+              <button
+                onClick={handleDeleteMemoClick}
+                className="flex items-center gap-2 px-2 py-1 text-left text-red-600 dark:text-red-400 hover:bg-gray-100 dark:hover:bg-zinc-700 outline-none rounded"
+              >
+                <TrashIcon className="w-4 h-auto" />
+                {t("common.delete")}
+              </button>
+            </>
+          )}
+        </div>
+      </PopoverContent>
+    </Popover>
   );
-};
+});
 
 export default MemoActionMenu;

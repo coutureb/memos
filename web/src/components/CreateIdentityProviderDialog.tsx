@@ -1,18 +1,21 @@
-import { Button, Divider, IconButton, Input, Option, Select, Typography } from "@mui/joy";
+import { XIcon } from "lucide-react";
 import { useEffect, useState } from "react";
 import { toast } from "react-hot-toast";
-import * as api from "@/helpers/api";
-import { UNKNOWN_ID } from "@/helpers/consts";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Separator } from "@/components/ui/separator";
+import { identityProviderServiceClient } from "@/grpcweb";
 import { absolutifyLink } from "@/helpers/utils";
+import { FieldMapping, IdentityProvider, IdentityProvider_Type, OAuth2Config } from "@/types/proto/api/v1/idp_service";
 import { useTranslate } from "@/utils/i18n";
 import { generateDialog } from "./Dialog";
-import Icon from "./Icon";
 
 const templateList: IdentityProvider[] = [
   {
-    id: UNKNOWN_ID,
-    name: "GitHub",
-    type: "OAUTH2",
+    name: "",
+    title: "GitHub",
+    type: IdentityProvider_Type.OAUTH2,
     identifierFilter: "",
     config: {
       oauth2Config: {
@@ -22,18 +25,18 @@ const templateList: IdentityProvider[] = [
         tokenUrl: "https://github.com/login/oauth/access_token",
         userInfoUrl: "https://api.github.com/user",
         scopes: ["read:user"],
-        fieldMapping: {
+        fieldMapping: FieldMapping.fromPartial({
           identifier: "login",
           displayName: "name",
           email: "email",
-        },
+        }),
       },
     },
   },
   {
-    id: UNKNOWN_ID,
-    name: "GitLab",
-    type: "OAUTH2",
+    name: "",
+    title: "GitLab",
+    type: IdentityProvider_Type.OAUTH2,
     identifierFilter: "",
     config: {
       oauth2Config: {
@@ -43,18 +46,18 @@ const templateList: IdentityProvider[] = [
         tokenUrl: "https://gitlab.com/oauth/token",
         userInfoUrl: "https://gitlab.com/oauth/userinfo",
         scopes: ["openid"],
-        fieldMapping: {
+        fieldMapping: FieldMapping.fromPartial({
           identifier: "name",
           displayName: "name",
           email: "email",
-        },
+        }),
       },
     },
   },
   {
-    id: UNKNOWN_ID,
-    name: "Google",
-    type: "OAUTH2",
+    name: "",
+    title: "Google",
+    type: IdentityProvider_Type.OAUTH2,
     identifierFilter: "",
     config: {
       oauth2Config: {
@@ -64,18 +67,18 @@ const templateList: IdentityProvider[] = [
         tokenUrl: "https://oauth2.googleapis.com/token",
         userInfoUrl: "https://www.googleapis.com/oauth2/v2/userinfo",
         scopes: ["https://www.googleapis.com/auth/userinfo.email", "https://www.googleapis.com/auth/userinfo.profile"],
-        fieldMapping: {
+        fieldMapping: FieldMapping.fromPartial({
           identifier: "email",
           displayName: "name",
           email: "email",
-        },
+        }),
       },
     },
   },
   {
-    id: UNKNOWN_ID,
-    name: "Custom",
-    type: "OAUTH2",
+    name: "",
+    title: "Custom",
+    type: IdentityProvider_Type.OAUTH2,
     identifierFilter: "",
     config: {
       oauth2Config: {
@@ -85,11 +88,11 @@ const templateList: IdentityProvider[] = [
         tokenUrl: "",
         userInfoUrl: "",
         scopes: [],
-        fieldMapping: {
+        fieldMapping: FieldMapping.fromPartial({
           identifier: "",
           displayName: "",
           email: "",
-        },
+        }),
       },
     },
   },
@@ -105,22 +108,22 @@ const CreateIdentityProviderDialog: React.FC<Props> = (props: Props) => {
   const identityProviderTypes = [...new Set(templateList.map((t) => t.type))];
   const { confirmCallback, destroy, identityProvider } = props;
   const [basicInfo, setBasicInfo] = useState({
-    name: "",
+    title: "",
     identifierFilter: "",
   });
-  const [type, setType] = useState<IdentityProviderType>("OAUTH2");
-  const [oauth2Config, setOAuth2Config] = useState<IdentityProviderOAuth2Config>({
+  const [type, setType] = useState<IdentityProvider_Type>(IdentityProvider_Type.OAUTH2);
+  const [oauth2Config, setOAuth2Config] = useState<OAuth2Config>({
     clientId: "",
     clientSecret: "",
     authUrl: "",
     tokenUrl: "",
     userInfoUrl: "",
     scopes: [],
-    fieldMapping: {
+    fieldMapping: FieldMapping.fromPartial({
       identifier: "",
       displayName: "",
       email: "",
-    },
+    }),
   });
   const [oauth2Scopes, setOAuth2Scopes] = useState<string>("");
   const [selectedTemplate, setSelectedTemplate] = useState<string>("GitHub");
@@ -129,13 +132,14 @@ const CreateIdentityProviderDialog: React.FC<Props> = (props: Props) => {
   useEffect(() => {
     if (identityProvider) {
       setBasicInfo({
-        name: identityProvider.name,
+        title: identityProvider.title,
         identifierFilter: identityProvider.identifierFilter,
       });
       setType(identityProvider.type);
-      if (identityProvider.type === "OAUTH2") {
-        setOAuth2Config(identityProvider.config.oauth2Config);
-        setOAuth2Scopes(identityProvider.config.oauth2Config.scopes.join(" "));
+      if (identityProvider.type === IdentityProvider_Type.OAUTH2) {
+        const oauth2Config = OAuth2Config.fromPartial(identityProvider.config?.oauth2Config || {});
+        setOAuth2Config(oauth2Config);
+        setOAuth2Scopes(oauth2Config.scopes.join(" "));
       }
     }
   }, []);
@@ -145,16 +149,17 @@ const CreateIdentityProviderDialog: React.FC<Props> = (props: Props) => {
       return;
     }
 
-    const template = templateList.find((t) => t.name === selectedTemplate);
+    const template = templateList.find((t) => t.title === selectedTemplate);
     if (template) {
       setBasicInfo({
-        name: template.name,
+        title: template.title,
         identifierFilter: template.identifierFilter,
       });
       setType(template.type);
-      if (template.type === "OAUTH2") {
-        setOAuth2Config(template.config.oauth2Config);
-        setOAuth2Scopes(template.config.oauth2Config.scopes.join(" "));
+      if (template.type === IdentityProvider_Type.OAUTH2) {
+        const oauth2Config = OAuth2Config.fromPartial(template.config?.oauth2Config || {});
+        setOAuth2Config(oauth2Config);
+        setOAuth2Scopes(oauth2Config.scopes.join(" "));
       }
     }
   }, [selectedTemplate]);
@@ -164,7 +169,7 @@ const CreateIdentityProviderDialog: React.FC<Props> = (props: Props) => {
   };
 
   const allowConfirmAction = () => {
-    if (basicInfo.name === "") {
+    if (basicInfo.title === "") {
       return false;
     }
     if (type === "OAUTH2") {
@@ -174,7 +179,7 @@ const CreateIdentityProviderDialog: React.FC<Props> = (props: Props) => {
         oauth2Config.tokenUrl === "" ||
         oauth2Config.userInfoUrl === "" ||
         oauth2Scopes === "" ||
-        oauth2Config.fieldMapping.identifier === ""
+        oauth2Config.fieldMapping?.identifier === ""
       ) {
         return false;
       }
@@ -191,34 +196,39 @@ const CreateIdentityProviderDialog: React.FC<Props> = (props: Props) => {
   const handleConfirmBtnClick = async () => {
     try {
       if (isCreating) {
-        await api.createIdentityProvider({
-          ...basicInfo,
-          type: type,
-          config: {
-            oauth2Config: {
-              ...oauth2Config,
-              scopes: oauth2Scopes.split(" "),
+        await identityProviderServiceClient.createIdentityProvider({
+          identityProvider: {
+            ...basicInfo,
+            type: type,
+            config: {
+              oauth2Config: {
+                ...oauth2Config,
+                scopes: oauth2Scopes.split(" "),
+              },
             },
           },
         });
-        toast.success(t("setting.sso-section.sso-created", { name: basicInfo.name }));
+        toast.success(t("setting.sso-section.sso-created", { name: basicInfo.title }));
       } else {
-        await api.patchIdentityProvider({
-          id: identityProvider.id,
-          type: type,
-          ...basicInfo,
-          config: {
-            oauth2Config: {
-              ...oauth2Config,
-              scopes: oauth2Scopes.split(" "),
+        await identityProviderServiceClient.updateIdentityProvider({
+          identityProvider: {
+            ...basicInfo,
+            name: identityProvider!.name,
+            type: type,
+            config: {
+              oauth2Config: {
+                ...oauth2Config,
+                scopes: oauth2Scopes.split(" "),
+              },
             },
           },
+          updateMask: ["title", "identifier_filter", "config"],
         });
-        toast.success(t("setting.sso-section.sso-updated", { name: basicInfo.name }));
+        toast.success(t("setting.sso-section.sso-updated", { name: basicInfo.title }));
       }
     } catch (error: any) {
+      toast.error(error.details);
       console.error(error);
-      toast.error(error.response.data.message);
     }
     if (confirmCallback) {
       confirmCallback();
@@ -226,7 +236,7 @@ const CreateIdentityProviderDialog: React.FC<Props> = (props: Props) => {
     destroy();
   };
 
-  const setPartialOAuth2Config = (state: Partial<IdentityProviderOAuth2Config>) => {
+  const setPartialOAuth2Config = (state: Partial<OAuth2Config>) => {
     setOAuth2Config({
       ...oauth2Config,
       ...state,
@@ -234,60 +244,63 @@ const CreateIdentityProviderDialog: React.FC<Props> = (props: Props) => {
   };
 
   return (
-    <>
-      <div className="dialog-header-container">
-        <p className="title-text ml-auto">{t(isCreating ? "setting.sso-section.create-sso" : "setting.sso-section.update-sso")}</p>
-        <IconButton size="sm" onClick={handleCloseBtnClick}>
-          <Icon.X className="w-5 h-auto" />
-        </IconButton>
+    <div className="max-w-full shadow flex flex-col justify-start items-start bg-white dark:bg-zinc-800 dark:text-gray-300 p-4 rounded-lg">
+      <div className="flex flex-row justify-between items-center mb-4 gap-2 w-full">
+        <p>{t(isCreating ? "setting.sso-section.create-sso" : "setting.sso-section.update-sso")}</p>
+        <Button variant="ghost" onClick={handleCloseBtnClick}>
+          <XIcon className="w-5 h-auto" />
+        </Button>
       </div>
-      <div className="dialog-content-container min-w-[19rem]">
+      <div className="flex flex-col justify-start items-start w-80">
         {isCreating && (
           <>
-            <Typography className="!mb-1" level="body-md">
-              {t("common.type")}
-            </Typography>
-            <Select className="w-full mb-4" value={type} onChange={(_, e) => setType(e ?? type)}>
-              {identityProviderTypes.map((kind) => (
-                <Option key={kind} value={kind}>
-                  {kind}
-                </Option>
-              ))}
+            <p className="mb-1!">{t("common.type")}</p>
+            <Select value={String(type)} onValueChange={(value) => setType(parseInt(value) as unknown as IdentityProvider_Type)}>
+              <SelectTrigger className="w-full mb-4">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {identityProviderTypes.map((kind) => (
+                  <SelectItem key={kind} value={String(kind)}>
+                    {IdentityProvider_Type[kind] || kind}
+                  </SelectItem>
+                ))}
+              </SelectContent>
             </Select>
-            <Typography className="mb-2" level="body-md">
-              {t("setting.sso-section.template")}
-            </Typography>
-            <Select className="mb-1 h-auto w-full" value={selectedTemplate} onChange={(_, e) => setSelectedTemplate(e ?? selectedTemplate)}>
-              {templateList.map((template) => (
-                <Option key={template.name} value={template.name}>
-                  {template.name}
-                </Option>
-              ))}
+            <p className="mb-2 text-sm font-medium">{t("setting.sso-section.template")}</p>
+            <Select value={selectedTemplate} onValueChange={(value) => setSelectedTemplate(value)}>
+              <SelectTrigger className="mb-1 h-auto w-full">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {templateList.map((template) => (
+                  <SelectItem key={template.title} value={template.title}>
+                    {template.title}
+                  </SelectItem>
+                ))}
+              </SelectContent>
             </Select>
-            <Divider className="!my-2" />
+            <Separator className="my-2" />
           </>
         )}
-        <Typography className="!mb-1" level="body-md">
+        <p className="mb-1 text-sm font-medium">
           {t("common.name")}
           <span className="text-red-600">*</span>
-        </Typography>
+        </p>
         <Input
-          className="mb-2"
+          className="mb-2 w-full"
           placeholder={t("common.name")}
-          value={basicInfo.name}
+          value={basicInfo.title}
           onChange={(e) =>
             setBasicInfo({
               ...basicInfo,
-              name: e.target.value,
+              title: e.target.value,
             })
           }
-          fullWidth
         />
-        <Typography className="!mb-1" level="body-md">
-          {t("setting.sso-section.identifier-filter")}
-        </Typography>
+        <p className="mb-1 text-sm font-medium">{t("setting.sso-section.identifier-filter")}</p>
         <Input
-          className="mb-2"
+          className="mb-2 w-full"
           placeholder={t("setting.sso-section.identifier-filter")}
           value={basicInfo.identifierFilter}
           onChange={(e) =>
@@ -296,118 +309,119 @@ const CreateIdentityProviderDialog: React.FC<Props> = (props: Props) => {
               identifierFilter: e.target.value,
             })
           }
-          fullWidth
         />
-        <Divider className="!my-2" />
+        <Separator className="my-2" />
         {type === "OAUTH2" && (
           <>
             {isCreating && (
-              <p className="border rounded-md p-2 text-sm w-full mb-2 break-all">
+              <p className="border border-zinc-100 dark:border-zinc-700 rounded-md p-2 text-sm w-full mb-2 break-all">
                 {t("setting.sso-section.redirect-url")}: {absolutifyLink("/auth/callback")}
               </p>
             )}
-            <Typography className="!mb-1" level="body-md">
+            <p className="mb-1 text-sm font-medium">
               {t("setting.sso-section.client-id")}
               <span className="text-red-600">*</span>
-            </Typography>
+            </p>
             <Input
-              className="mb-2"
+              className="mb-2 w-full"
               placeholder={t("setting.sso-section.client-id")}
               value={oauth2Config.clientId}
               onChange={(e) => setPartialOAuth2Config({ clientId: e.target.value })}
-              fullWidth
             />
-            <Typography className="!mb-1" level="body-md">
+            <p className="mb-1 text-sm font-medium">
               {t("setting.sso-section.client-secret")}
               <span className="text-red-600">*</span>
-            </Typography>
+            </p>
             <Input
-              className="mb-2"
+              className="mb-2 w-full"
               placeholder={t("setting.sso-section.client-secret")}
               value={oauth2Config.clientSecret}
               onChange={(e) => setPartialOAuth2Config({ clientSecret: e.target.value })}
-              fullWidth
             />
-            <Typography className="!mb-1" level="body-md">
+            <p className="mb-1 text-sm font-medium">
               {t("setting.sso-section.authorization-endpoint")}
               <span className="text-red-600">*</span>
-            </Typography>
+            </p>
             <Input
-              className="mb-2"
+              className="mb-2 w-full"
               placeholder={t("setting.sso-section.authorization-endpoint")}
               value={oauth2Config.authUrl}
               onChange={(e) => setPartialOAuth2Config({ authUrl: e.target.value })}
-              fullWidth
             />
-            <Typography className="!mb-1" level="body-md">
+            <p className="mb-1 text-sm font-medium">
               {t("setting.sso-section.token-endpoint")}
               <span className="text-red-600">*</span>
-            </Typography>
+            </p>
             <Input
-              className="mb-2"
+              className="mb-2 w-full"
               placeholder={t("setting.sso-section.token-endpoint")}
               value={oauth2Config.tokenUrl}
               onChange={(e) => setPartialOAuth2Config({ tokenUrl: e.target.value })}
-              fullWidth
             />
-            <Typography className="!mb-1" level="body-md">
+            <p className="mb-1 text-sm font-medium">
               {t("setting.sso-section.user-endpoint")}
               <span className="text-red-600">*</span>
-            </Typography>
+            </p>
             <Input
-              className="mb-2"
+              className="mb-2 w-full"
               placeholder={t("setting.sso-section.user-endpoint")}
               value={oauth2Config.userInfoUrl}
               onChange={(e) => setPartialOAuth2Config({ userInfoUrl: e.target.value })}
-              fullWidth
             />
-            <Typography className="!mb-1" level="body-md">
+            <p className="mb-1 text-sm font-medium">
               {t("setting.sso-section.scopes")}
               <span className="text-red-600">*</span>
-            </Typography>
+            </p>
             <Input
-              className="mb-2"
+              className="mb-2 w-full"
               placeholder={t("setting.sso-section.scopes")}
               value={oauth2Scopes}
               onChange={(e) => setOAuth2Scopes(e.target.value)}
-              fullWidth
             />
-            <Divider className="!my-2" />
-            <Typography className="!mb-1" level="body-md">
+            <Separator className="my-2" />
+            <p className="mb-1 text-sm font-medium">
               {t("setting.sso-section.identifier")}
               <span className="text-red-600">*</span>
-            </Typography>
+            </p>
             <Input
-              className="mb-2"
+              className="mb-2 w-full"
               placeholder={t("setting.sso-section.identifier")}
-              value={oauth2Config.fieldMapping.identifier}
-              onChange={(e) => setPartialOAuth2Config({ fieldMapping: { ...oauth2Config.fieldMapping, identifier: e.target.value } })}
-              fullWidth
+              value={oauth2Config.fieldMapping!.identifier}
+              onChange={(e) =>
+                setPartialOAuth2Config({ fieldMapping: { ...oauth2Config.fieldMapping, identifier: e.target.value } as FieldMapping })
+              }
             />
-            <Typography className="!mb-1" level="body-md">
-              {t("setting.sso-section.display-name")}
-            </Typography>
+            <p className="mb-1 text-sm font-medium">{t("setting.sso-section.display-name")}</p>
             <Input
-              className="mb-2"
+              className="mb-2 w-full"
               placeholder={t("setting.sso-section.display-name")}
-              value={oauth2Config.fieldMapping.displayName}
-              onChange={(e) => setPartialOAuth2Config({ fieldMapping: { ...oauth2Config.fieldMapping, displayName: e.target.value } })}
-              fullWidth
+              value={oauth2Config.fieldMapping!.displayName}
+              onChange={(e) =>
+                setPartialOAuth2Config({ fieldMapping: { ...oauth2Config.fieldMapping, displayName: e.target.value } as FieldMapping })
+              }
             />
-            <Typography className="!mb-1" level="body-md">
-              {t("common.email")}
-            </Typography>
+            <p className="mb-1 text-sm font-medium">{t("common.email")}</p>
             <Input
-              className="mb-2"
+              className="mb-2 w-full"
               placeholder={t("common.email")}
-              value={oauth2Config.fieldMapping.email}
-              onChange={(e) => setPartialOAuth2Config({ fieldMapping: { ...oauth2Config.fieldMapping, email: e.target.value } })}
-              fullWidth
+              value={oauth2Config.fieldMapping!.email}
+              onChange={(e) =>
+                setPartialOAuth2Config({ fieldMapping: { ...oauth2Config.fieldMapping, email: e.target.value } as FieldMapping })
+              }
+            />
+            <p className="mb-1 text-sm font-medium">Avatar URL</p>
+            <Input
+              className="mb-2 w-full"
+              placeholder={"Avatar URL"}
+              value={oauth2Config.fieldMapping!.avatarUrl}
+              onChange={(e) =>
+                setPartialOAuth2Config({ fieldMapping: { ...oauth2Config.fieldMapping, avatarUrl: e.target.value } as FieldMapping })
+              }
             />
           </>
         )}
         <div className="mt-2 w-full flex flex-row justify-end items-center space-x-1">
-          <Button variant="plain" color="neutral" onClick={handleCloseBtnClick}>
+          <Button variant="ghost" onClick={handleCloseBtnClick}>
             {t("common.cancel")}
           </Button>
           <Button onClick={handleConfirmBtnClick} disabled={!allowConfirmAction()}>
@@ -415,7 +429,7 @@ const CreateIdentityProviderDialog: React.FC<Props> = (props: Props) => {
           </Button>
         </div>
       </div>
-    </>
+    </div>
   );
 };
 

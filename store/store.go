@@ -1,46 +1,57 @@
 package store
 
 import (
-	"context"
-	"sync"
+	"time"
 
-	"github.com/usememos/memos/server/profile"
+	"github.com/usememos/memos/internal/profile"
+	"github.com/usememos/memos/store/cache"
 )
 
 // Store provides database access to all raw objects.
 type Store struct {
-	Profile                 *profile.Profile
-	driver                  Driver
-	workspaceSettingCache   sync.Map // map[string]*WorkspaceSetting
-	workspaceSettingV1Cache sync.Map // map[string]*storepb.WorkspaceSetting
-	userCache               sync.Map // map[int]*User
-	userSettingCache        sync.Map // map[string]*UserSetting
-	idpCache                sync.Map // map[int]*IdentityProvider
+	profile *profile.Profile
+	driver  Driver
+
+	// Cache settings
+	cacheConfig cache.Config
+
+	// Caches
+	workspaceSettingCache *cache.Cache // cache for workspace settings
+	userCache             *cache.Cache // cache for users
+	userSettingCache      *cache.Cache // cache for user settings
 }
 
 // New creates a new instance of Store.
 func New(driver Driver, profile *profile.Profile) *Store {
-	return &Store{
-		driver:  driver,
-		Profile: profile,
+	// Default cache settings
+	cacheConfig := cache.Config{
+		DefaultTTL:      10 * time.Minute,
+		CleanupInterval: 5 * time.Minute,
+		MaxItems:        1000,
+		OnEviction:      nil,
 	}
+
+	store := &Store{
+		driver:                driver,
+		profile:               profile,
+		cacheConfig:           cacheConfig,
+		workspaceSettingCache: cache.New(cacheConfig),
+		userCache:             cache.New(cacheConfig),
+		userSettingCache:      cache.New(cacheConfig),
+	}
+
+	return store
 }
 
-func (s *Store) MigrateManually(ctx context.Context) error {
-	if err := s.MigrateWorkspaceSetting(ctx); err != nil {
-		return err
-	}
-	return nil
-}
-
-func (s *Store) Vacuum(ctx context.Context) error {
-	return s.driver.Vacuum(ctx)
+func (s *Store) GetDriver() Driver {
+	return s.driver
 }
 
 func (s *Store) Close() error {
-	return s.driver.Close()
-}
+	// Stop all cache cleanup goroutines
+	s.workspaceSettingCache.Close()
+	s.userCache.Close()
+	s.userSettingCache.Close()
 
-func (s *Store) GetCurrentDBSize(ctx context.Context) (int64, error) {
-	return s.driver.GetCurrentDBSize(ctx)
+	return s.driver.Close()
 }

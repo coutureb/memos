@@ -2,9 +2,10 @@ package mysql
 
 import (
 	"context"
-	"database/sql"
+	"fmt"
 	"strings"
 
+	"github.com/usememos/memos/plugin/filter"
 	"github.com/usememos/memos/store"
 )
 
@@ -40,6 +41,25 @@ func (d *DB) ListMemoRelations(ctx context.Context, find *store.FindMemoRelation
 	}
 	if find.Type != nil {
 		where, args = append(where, "`type` = ?"), append(args, find.Type)
+	}
+	if find.MemoFilter != nil {
+		// Parse filter string and return the parsed expression.
+		// The filter string should be a CEL expression.
+		parsedExpr, err := filter.Parse(*find.MemoFilter, filter.MemoFilterCELAttributes...)
+		if err != nil {
+			return nil, err
+		}
+		convertCtx := filter.NewConvertContext()
+		// ConvertExprToSQL converts the parsed expression to a SQL condition string.
+		if err := d.ConvertExprToSQL(convertCtx, parsedExpr.GetExpr()); err != nil {
+			return nil, err
+		}
+		condition := convertCtx.Buffer.String()
+		if condition != "" {
+			where = append(where, fmt.Sprintf("memo_id IN (SELECT id FROM memo WHERE %s)", condition))
+			where = append(where, fmt.Sprintf("related_memo_id IN (SELECT id FROM memo WHERE %s)", condition))
+			args = append(args, append(convertCtx.Args, convertCtx.Args...)...)
+		}
 	}
 
 	rows, err := d.db.QueryContext(ctx, "SELECT `memo_id`, `related_memo_id`, `type` FROM `memo_relation` WHERE "+strings.Join(where, " AND "), args...)
@@ -85,13 +105,6 @@ func (d *DB) DeleteMemoRelation(ctx context.Context, delete *store.DeleteMemoRel
 		return err
 	}
 	if _, err = result.RowsAffected(); err != nil {
-		return err
-	}
-	return nil
-}
-
-func vacuumMemoRelations(ctx context.Context, tx *sql.Tx) error {
-	if _, err := tx.ExecContext(ctx, "DELETE FROM `memo_relation` WHERE `memo_id` NOT IN (SELECT `id` FROM `memo`) OR `related_memo_id` NOT IN (SELECT `id` FROM `memo`)"); err != nil {
 		return err
 	}
 	return nil

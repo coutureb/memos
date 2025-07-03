@@ -3,16 +3,13 @@ package sqlite
 import (
 	"context"
 	"database/sql"
-	"os"
 
 	"github.com/pkg/errors"
-	"google.golang.org/grpc/codes"
-	"google.golang.org/grpc/status"
 
 	// Import the SQLite driver.
 	_ "modernc.org/sqlite"
 
-	"github.com/usememos/memos/server/profile"
+	"github.com/usememos/memos/internal/profile"
 	"github.com/usememos/memos/store"
 )
 
@@ -58,65 +55,16 @@ func (d *DB) GetDB() *sql.DB {
 	return d.db
 }
 
-func (d *DB) Vacuum(ctx context.Context) error {
-	tx, err := d.db.BeginTx(ctx, nil)
-	if err != nil {
-		return err
-	}
-	defer tx.Rollback()
-
-	if err := vacuumImpl(ctx, tx); err != nil {
-		return err
-	}
-
-	if err := tx.Commit(); err != nil {
-		return err
-	}
-
-	// Vacuum sqlite database file size after deleting resource.
-	if _, err := d.db.Exec("VACUUM"); err != nil {
-		return err
-	}
-
-	return nil
-}
-
-func vacuumImpl(ctx context.Context, tx *sql.Tx) error {
-	if err := vacuumMemo(ctx, tx); err != nil {
-		return err
-	}
-	if err := vacuumResource(ctx, tx); err != nil {
-		return err
-	}
-	if err := vacuumUserSetting(ctx, tx); err != nil {
-		return err
-	}
-	if err := vacuumMemoOrganizer(ctx, tx); err != nil {
-		return err
-	}
-	if err := vacuumMemoRelations(ctx, tx); err != nil {
-		return err
-	}
-	if err := vacuumInbox(ctx, tx); err != nil {
-		return err
-	}
-	if err := vacuumTag(ctx, tx); err != nil {
-		// Prevent revive warning.
-		return err
-	}
-
-	return nil
-}
-
-func (d *DB) GetCurrentDBSize(context.Context) (int64, error) {
-	fi, err := os.Stat(d.profile.DSN)
-	if err != nil {
-		return 0, status.Errorf(codes.Internal, "failed to get file info: %v", err)
-	}
-
-	return fi.Size(), nil
-}
-
 func (d *DB) Close() error {
 	return d.db.Close()
+}
+
+func (d *DB) IsInitialized(ctx context.Context) (bool, error) {
+	// Check if the database is initialized by checking if the memo table exists.
+	var exists bool
+	err := d.db.QueryRowContext(ctx, "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name='memo')").Scan(&exists)
+	if err != nil {
+		return false, errors.Wrap(err, "failed to check if database is initialized")
+	}
+	return exists, nil
 }

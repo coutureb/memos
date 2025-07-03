@@ -1,7 +1,10 @@
-import { useEffect } from "react";
+import { observer } from "mobx-react-lite";
+import { useContext, useEffect } from "react";
 import useLoading from "@/hooks/useLoading";
 import useNavigateTo from "@/hooks/useNavigateTo";
-import { useMemoStore } from "@/store/v1";
+import { memoNamePrefix } from "@/store/common";
+import { memoStore } from "@/store/v2";
+import { RendererContext } from "../types";
 import Error from "./Error";
 
 interface Props {
@@ -9,29 +12,34 @@ interface Props {
   params: string;
 }
 
-const ReferencedMemo = ({ resourceId, params: paramsStr }: Props) => {
+const ReferencedMemo = observer(({ resourceId: uid, params: paramsStr }: Props) => {
   const navigateTo = useNavigateTo();
   const loadingState = useLoading();
-  const memoStore = useMemoStore();
-  const memo = memoStore.getMemoByName(resourceId);
+  const memoName = `${memoNamePrefix}${uid}`;
+  const memo = memoStore.getMemoByName(memoName);
   const params = new URLSearchParams(paramsStr);
+  const context = useContext(RendererContext);
 
   useEffect(() => {
-    memoStore.searchMemos(`resource_name == "${resourceId}"`).finally(() => loadingState.setFinish());
-  }, [resourceId]);
+    memoStore.getOrFetchMemoByName(memoName).finally(() => loadingState.setFinish());
+  }, [memoName]);
 
   if (loadingState.isLoading) {
     return null;
   }
   if (!memo) {
-    return <Error message={`Memo not found: ${resourceId}`} />;
+    return <Error message={`Memo not found: ${uid}`} />;
   }
 
   const paramsText = params.has("text") ? params.get("text") : undefined;
-  const displayContent = paramsText || (memo.content.length > 12 ? `${memo.content.slice(0, 12)}...` : memo.content);
+  const displayContent = paramsText || (memo.snippet.length > 12 ? `${memo.snippet.slice(0, 12)}...` : memo.snippet);
 
   const handleGotoMemoDetailPage = () => {
-    navigateTo(`/m/${memo.name}`);
+    navigateTo(`/${memo.name}`, {
+      state: {
+        from: context.parentPage,
+      },
+    });
   };
 
   return (
@@ -42,6 +50,6 @@ const ReferencedMemo = ({ resourceId, params: paramsStr }: Props) => {
       {displayContent}
     </span>
   );
-};
+});
 
 export default ReferencedMemo;

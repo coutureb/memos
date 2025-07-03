@@ -2,19 +2,19 @@ package sqlite
 
 import (
 	"context"
+	"fmt"
 	"strings"
 
 	"github.com/usememos/memos/store"
 )
 
 func (d *DB) CreateUser(ctx context.Context, create *store.User) (*store.User, error) {
-	fields := []string{"`username`", "`role`", "`email`", "`nickname`", "`password_hash`"}
-	placeholder := []string{"?", "?", "?", "?", "?"}
-	args := []any{create.Username, create.Role, create.Email, create.Nickname, create.PasswordHash}
-	stmt := "INSERT INTO user (" + strings.Join(fields, ", ") + ") VALUES (" + strings.Join(placeholder, ", ") + ") RETURNING id, avatar_url, description, created_ts, updated_ts, row_status"
+	fields := []string{"`username`", "`role`", "`email`", "`nickname`", "`password_hash`, `avatar_url`"}
+	placeholder := []string{"?", "?", "?", "?", "?", "?"}
+	args := []any{create.Username, create.Role, create.Email, create.Nickname, create.PasswordHash, create.AvatarURL}
+	stmt := "INSERT INTO user (" + strings.Join(fields, ", ") + ") VALUES (" + strings.Join(placeholder, ", ") + ") RETURNING id, description, created_ts, updated_ts, row_status"
 	if err := d.db.QueryRowContext(ctx, stmt, args...).Scan(
 		&create.ID,
-		&create.AvatarURL,
 		&create.Description,
 		&create.CreatedTs,
 		&create.UpdatedTs,
@@ -51,6 +51,9 @@ func (d *DB) UpdateUser(ctx context.Context, update *store.UpdateUser) (*store.U
 	}
 	if v := update.Description; v != nil {
 		set, args = append(set, "description = ?"), append(args, *v)
+	}
+	if v := update.Role; v != nil {
+		set, args = append(set, "role = ?"), append(args, *v)
 	}
 	args = append(args, update.ID)
 
@@ -99,6 +102,7 @@ func (d *DB) ListUsers(ctx context.Context, find *store.FindUser) ([]*store.User
 		where, args = append(where, "nickname = ?"), append(args, *v)
 	}
 
+	orderBy := []string{"created_ts DESC", "row_status DESC"}
 	query := `
 		SELECT 
 			id,
@@ -113,9 +117,11 @@ func (d *DB) ListUsers(ctx context.Context, find *store.FindUser) ([]*store.User
 			updated_ts,
 			row_status
 		FROM user
-		WHERE ` + strings.Join(where, " AND ") + `
-		ORDER BY created_ts DESC, row_status DESC
-	`
+		WHERE ` + strings.Join(where, " AND ") + ` ORDER BY ` + strings.Join(orderBy, ", ")
+	if v := find.Limit; v != nil {
+		query += fmt.Sprintf(" LIMIT %d", *v)
+	}
+
 	rows, err := d.db.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, err
@@ -160,11 +166,5 @@ func (d *DB) DeleteUser(ctx context.Context, delete *store.DeleteUser) error {
 	if _, err := result.RowsAffected(); err != nil {
 		return err
 	}
-
-	if err := d.Vacuum(ctx); err != nil {
-		// Prevent linter warning.
-		return err
-	}
-
 	return nil
 }

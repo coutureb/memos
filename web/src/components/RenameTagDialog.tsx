@@ -1,13 +1,12 @@
-import { Button, IconButton, Input, List, ListItem } from "@mui/joy";
+import { XIcon } from "lucide-react";
 import React, { useState } from "react";
 import { toast } from "react-hot-toast";
-import { tagServiceClient } from "@/grpcweb";
-import useCurrentUser from "@/hooks/useCurrentUser";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { memoServiceClient } from "@/grpcweb";
 import useLoading from "@/hooks/useLoading";
-import { useFilterStore } from "@/store/module";
 import { useTranslate } from "@/utils/i18n";
 import { generateDialog } from "./Dialog";
-import Icon from "./Icon";
 
 interface Props extends DialogProps {
   tag: string;
@@ -16,8 +15,6 @@ interface Props extends DialogProps {
 const RenameTagDialog: React.FC<Props> = (props: Props) => {
   const { tag, destroy } = props;
   const t = useTranslate();
-  const filterStore = useFilterStore();
-  const currentUser = useCurrentUser();
   const [newName, setNewName] = useState(tag);
   const requestState = useLoading(false);
 
@@ -27,22 +24,21 @@ const RenameTagDialog: React.FC<Props> = (props: Props) => {
 
   const handleConfirm = async () => {
     if (!newName || newName.includes(" ")) {
-      toast.error("Tag name cannot be empty or contain spaces");
+      toast.error(t("tag.rename-error-empty"));
       return;
     }
     if (newName === tag) {
-      toast.error("New name cannot be the same as the old name");
+      toast.error(t("tag.rename-error-repeat"));
       return;
     }
 
     try {
-      await tagServiceClient.renameTag({
-        user: currentUser.name,
-        oldName: tag,
-        newName: newName,
+      await memoServiceClient.renameMemoTag({
+        parent: "memos/-",
+        oldTag: tag,
+        newTag: newName,
       });
-      toast.success("Rename tag successfully");
-      filterStore.setTagFilter(newName);
+      toast.success(t("tag.rename-success"));
     } catch (error: any) {
       console.error(error);
       toast.error(error.details);
@@ -51,45 +47,39 @@ const RenameTagDialog: React.FC<Props> = (props: Props) => {
   };
 
   return (
-    <>
-      <div className="dialog-header-container">
-        <p className="title-text">{"Rename tag"}</p>
-        <IconButton size="sm" onClick={() => destroy()}>
-          <Icon.X className="w-5 h-auto" />
-        </IconButton>
+    <div className="max-w-full shadow flex flex-col justify-start items-start bg-white dark:bg-zinc-800 dark:text-gray-300 p-4 rounded-lg">
+      <div className="flex flex-row justify-between items-center mb-4 gap-2 w-full">
+        <p className="title-text">{t("tag.rename-tag")}</p>
+        <Button variant="ghost" onClick={() => destroy()}>
+          <XIcon className="w-5 h-auto" />
+        </Button>
       </div>
-      <div className="dialog-content-container max-w-xs">
+      <div className="flex flex-col justify-start items-start max-w-xs">
         <div className="w-full flex flex-col justify-start items-start mb-3">
           <div className="relative w-full mb-2 flex flex-row justify-start items-center space-x-2">
-            <span className="w-20 text-sm whitespace-nowrap shrink-0 text-right">Old Name</span>
-            <Input className="w-full" readOnly disabled type="text" placeholder="A new tag name" size="md" value={tag} />
+            <span className="w-20 text-sm whitespace-nowrap shrink-0 text-right">{t("tag.old-name")}</span>
+            <Input className="w-full" readOnly disabled type="text" placeholder="A new tag name" value={tag} />
           </div>
           <div className="relative w-full mb-2 flex flex-row justify-start items-center space-x-2">
-            <span className="w-20 text-sm whitespace-nowrap shrink-0 text-right">New Name</span>
-            <Input
-              className="w-full"
-              type="text"
-              placeholder="A new tag name"
-              size="md"
-              value={newName}
-              onChange={handleTagNameInputChange}
-            />
+            <span className="w-20 text-sm whitespace-nowrap shrink-0 text-right">{t("tag.new-name")}</span>
+            <Input className="w-full" type="text" placeholder="A new tag name" value={newName} onChange={handleTagNameInputChange} />
           </div>
-          <List className="!leading-5" size="sm" marker="disc">
-            <ListItem>All your memos with this tag will be updated.</ListItem>
-            <ListItem>If the number of related memos is large, it will take longer and the server load will become higher.</ListItem>
-          </List>
+          <ul className="list-disc list-inside text-sm ml-4">
+            <li>
+              <p className="leading-5">{t("tag.rename-tip")}</p>
+            </li>
+          </ul>
         </div>
-        <div className="w-full flex flex-row justify-end items-center mt-2 space-x-2">
-          <Button color="neutral" variant="plain" disabled={requestState.isLoading} loading={requestState.isLoading} onClick={destroy}>
+        <div className="w-full flex flex-row justify-end items-center space-x-2">
+          <Button variant="ghost" disabled={requestState.isLoading} onClick={destroy}>
             {t("common.cancel")}
           </Button>
-          <Button color="primary" disabled={requestState.isLoading} loading={requestState.isLoading} onClick={handleConfirm}>
+          <Button disabled={requestState.isLoading} onClick={handleConfirm}>
             {t("common.confirm")}
           </Button>
         </div>
       </div>
-    </>
+    </div>
   );
 };
 

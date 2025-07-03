@@ -1,60 +1,80 @@
-import { Link as MLink, Tooltip } from "@mui/joy";
-import { useEffect, useState } from "react";
-import { linkServiceClient } from "@/grpcweb";
-import { LinkMetadata } from "@/types/proto/api/v2/link_service";
+import { useState } from "react";
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
+import { markdownServiceClient } from "@/grpcweb";
+import { workspaceStore } from "@/store/v2";
+import { LinkMetadata, Node } from "@/types/proto/api/v1/markdown_service";
+import Renderer from "./Renderer";
 
 interface Props {
   url: string;
-  text?: string;
+  content?: Node[];
 }
 
 const getFaviconWithGoogleS2 = (url: string) => {
   try {
     const urlObject = new URL(url);
     return `https://www.google.com/s2/favicons?sz=128&domain=${urlObject.hostname}`;
-  } catch (error) {
+  } catch {
     return undefined;
   }
 };
 
-const Link: React.FC<Props> = ({ text, url }: Props) => {
+const Link: React.FC<Props> = ({ content, url }: Props) => {
+  const workspaceMemoRelatedSetting = workspaceStore.state.memoRelatedSetting;
+  const [initialized, setInitialized] = useState<boolean>(false);
+  const [showTooltip, setShowTooltip] = useState<boolean>(false);
   const [linkMetadata, setLinkMetadata] = useState<LinkMetadata | undefined>();
 
-  useEffect(() => {
-    (async () => {
+  const handleMouseEnter = async () => {
+    if (!workspaceMemoRelatedSetting.enableLinkPreview) {
+      return;
+    }
+
+    setShowTooltip(true);
+    if (!initialized) {
       try {
-        const { linkMetadata } = await linkServiceClient.getLinkMetadata({ link: url }, {});
+        const linkMetadata = await markdownServiceClient.getLinkMetadata({ link: url });
         setLinkMetadata(linkMetadata);
       } catch (error) {
         console.error("Error fetching URL metadata:", error);
       }
-    })();
-  }, [url]);
+      setInitialized(true);
+    }
+  };
 
-  return linkMetadata ? (
-    <Tooltip
-      variant="outlined"
-      title={
-        <div className="w-full max-w-64 sm:max-w-96 p-1 flex flex-col">
-          <a href={url} target="_blank" rel="noopener noreferrer" className="group w-full flex flex-row justify-start items-center gap-1">
-            <img className="w-5 h-5 pointer-events-none" src={getFaviconWithGoogleS2(url)} alt={linkMetadata?.title} />
-            <h3 className="text-base truncate dark:opacity-90 group-hover:opacity-80 group-hover:underline">{linkMetadata?.title}</h3>
+  return (
+    <TooltipProvider>
+      <Tooltip open={showTooltip}>
+        <TooltipTrigger asChild>
+          <a
+            className="underline text-blue-600 hover:text-blue-800 dark:text-blue-400 dark:hover:text-blue-300"
+            target="_blank"
+            href={url}
+            rel="noopener noreferrer"
+            onMouseEnter={handleMouseEnter}
+            onMouseLeave={() => setShowTooltip(false)}
+          >
+            {content ? content.map((child, index) => <Renderer key={`${child.type}-${index}`} index={String(index)} node={child} />) : url}
           </a>
-          {linkMetadata.description && (
-            <p className="mt-1 w-full text-sm leading-snug opacity-80 line-clamp-3">{linkMetadata.description}</p>
-          )}
-        </div>
-      }
-      arrow
-    >
-      <MLink underline="always" href={url}>
-        {url || text}
-      </MLink>
-    </Tooltip>
-  ) : (
-    <MLink underline="always" href={url}>
-      {url || text}
-    </MLink>
+        </TooltipTrigger>
+        {linkMetadata && (
+          <TooltipContent className="w-full max-w-64 sm:max-w-96 p-1">
+            <div className="w-full flex flex-col">
+              <div className="w-full flex flex-row justify-start items-center gap-1">
+                <img className="w-5 h-5 rounded" src={getFaviconWithGoogleS2(url)} alt={linkMetadata?.title} />
+                <h3 className="text-base truncate dark:opacity-90">{linkMetadata?.title}</h3>
+              </div>
+              {linkMetadata.description && (
+                <p className="mt-1 w-full text-sm leading-snug opacity-80 line-clamp-3">{linkMetadata.description}</p>
+              )}
+              {linkMetadata.image && (
+                <img className="mt-1 w-full h-32 object-cover rounded" src={linkMetadata.image} alt={linkMetadata.title} />
+              )}
+            </div>
+          </TooltipContent>
+        )}
+      </Tooltip>
+    </TooltipProvider>
   );
 };
 

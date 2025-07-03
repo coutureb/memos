@@ -1,26 +1,18 @@
-import { Button, Divider, Dropdown, List, ListItem, Menu, MenuButton, MenuItem } from "@mui/joy";
+import { MoreVerticalIcon } from "lucide-react";
 import { useEffect, useState } from "react";
 import { toast } from "react-hot-toast";
 import { Link } from "react-router-dom";
-import * as api from "@/helpers/api";
-import { useGlobalStore } from "@/store/module";
+import { Button } from "@/components/ui/button";
+import { Separator } from "@/components/ui/separator";
+import { identityProviderServiceClient } from "@/grpcweb";
+import { IdentityProvider } from "@/types/proto/api/v1/idp_service";
 import { useTranslate } from "@/utils/i18n";
 import showCreateIdentityProviderDialog from "../CreateIdentityProviderDialog";
-import { showCommonDialog } from "../Dialog/CommonDialog";
-import Icon from "../Icon";
 import LearnMore from "../LearnMore";
-
-interface State {
-  disablePasswordLogin: boolean;
-}
+import { Popover, PopoverContent, PopoverTrigger } from "../ui/popover";
 
 const SSOSection = () => {
   const t = useTranslate();
-  const globalStore = useGlobalStore();
-  const systemStatus = globalStore.state.systemStatus;
-  const [state] = useState<State>({
-    disablePasswordLogin: systemStatus.disablePasswordLogin,
-  });
   const [identityProviderList, setIdentityProviderList] = useState<IdentityProvider[]>([]);
 
   useEffect(() => {
@@ -28,32 +20,21 @@ const SSOSection = () => {
   }, []);
 
   const fetchIdentityProviderList = async () => {
-    const { data: identityProviderList } = await api.getIdentityProviderList();
-    setIdentityProviderList(identityProviderList);
+    const { identityProviders } = await identityProviderServiceClient.listIdentityProviders({});
+    setIdentityProviderList(identityProviders);
   };
 
   const handleDeleteIdentityProvider = async (identityProvider: IdentityProvider) => {
-    let content = t("setting.sso-section.confirm-delete", { name: identityProvider.name });
-
-    if (state.disablePasswordLogin) {
-      content += "\n\n" + t("setting.sso-section.disabled-password-login-warning");
+    const confirmed = window.confirm(t("setting.sso-section.confirm-delete", { name: identityProvider.title }));
+    if (confirmed) {
+      try {
+        await identityProviderServiceClient.deleteIdentityProvider({ name: identityProvider.name });
+      } catch (error: any) {
+        console.error(error);
+        toast.error(error.details);
+      }
+      await fetchIdentityProviderList();
     }
-
-    showCommonDialog({
-      title: t("setting.sso-section.delete-sso"),
-      content: content,
-      style: "danger",
-      dialogName: "delete-identity-provider-dialog",
-      onConfirm: async () => {
-        try {
-          await api.deleteIdentityProvider(identityProvider.id);
-        } catch (error: any) {
-          console.error(error);
-          toast.error(error.response.data.message);
-        }
-        await fetchIdentityProviderList();
-      },
-    });
   };
 
   return (
@@ -61,56 +42,70 @@ const SSOSection = () => {
       <div className="w-full flex flex-row justify-between items-center gap-1">
         <div className="flex flex-row items-center gap-1">
           <span className="font-mono text-gray-400">{t("setting.sso-section.sso-list")}</span>
-          <LearnMore url="https://usememos.com/docs/advanced-settings/keycloak" />
+          <LearnMore url="https://www.usememos.com/docs/advanced-settings/sso" />
         </div>
-        <Button onClick={() => showCreateIdentityProviderDialog(undefined, fetchIdentityProviderList)}>{t("common.create")}</Button>
+        <Button color="primary" onClick={() => showCreateIdentityProviderDialog(undefined, fetchIdentityProviderList)}>
+          {t("common.create")}
+        </Button>
       </div>
-      <Divider />
+      <Separator />
       {identityProviderList.map((identityProvider) => (
         <div
-          key={identityProvider.id}
+          key={identityProvider.name}
           className="py-2 w-full border-b last:border-b dark:border-zinc-700 flex flex-row items-center justify-between"
         >
           <div className="flex flex-row items-center">
             <p className="ml-2">
-              {identityProvider.name}
+              {identityProvider.title}
               <span className="text-sm ml-1 opacity-40">({identityProvider.type})</span>
             </p>
           </div>
           <div className="flex flex-row items-center">
-            <Dropdown>
-              <MenuButton size="sm">
-                <Icon.MoreVertical className="w-4 h-auto" />
-              </MenuButton>
-              <Menu placement="bottom-end" size="sm">
-                <MenuItem onClick={() => showCreateIdentityProviderDialog(identityProvider, fetchIdentityProviderList)}>
-                  {t("common.edit")}
-                </MenuItem>
-                <MenuItem onClick={() => handleDeleteIdentityProvider(identityProvider)}>{t("common.delete")}</MenuItem>
-              </Menu>
-            </Dropdown>
+            <Popover>
+              <PopoverTrigger asChild>
+                <button className="flex items-center justify-center p-1 hover:bg-gray-100 dark:hover:bg-zinc-700 rounded">
+                  <MoreVerticalIcon className="w-4 h-auto" />
+                </button>
+              </PopoverTrigger>
+              <PopoverContent align="end" sideOffset={2}>
+                <div className="flex flex-col gap-0.5 text-sm">
+                  <button
+                    onClick={() => showCreateIdentityProviderDialog(identityProvider, fetchIdentityProviderList)}
+                    className="flex items-center gap-2 px-2 py-1 text-left dark:text-zinc-300 hover:bg-gray-100 dark:hover:bg-zinc-700 outline-none rounded"
+                  >
+                    {t("common.edit")}
+                  </button>
+                  <button
+                    onClick={() => handleDeleteIdentityProvider(identityProvider)}
+                    className="flex items-center gap-2 px-2 py-1 text-left text-red-600 dark:text-red-400 hover:bg-gray-100 dark:hover:bg-zinc-700 outline-none rounded"
+                  >
+                    {t("common.delete")}
+                  </button>
+                </div>
+              </PopoverContent>
+            </Popover>
           </div>
         </div>
       ))}
       {identityProviderList.length === 0 && (
         <div className="w-full mt-2 text-sm dark:border-zinc-700 opacity-60 flex flex-row items-center justify-between">
-          <p className="">No SSO found.</p>
+          <p className="">{t("setting.sso-section.no-sso-found")}</p>
         </div>
       )}
 
       <div className="w-full mt-4">
         <p className="text-sm">{t("common.learn-more")}:</p>
-        <List component="ul" marker="disc" size="sm">
-          <ListItem>
+        <ul className="list-disc list-inside text-sm ml-4">
+          <li>
             <Link
               className="text-sm text-blue-600 hover:underline"
-              to="https://www.usememos.com/docs/advanced-settings/keycloak"
+              to="https://www.usememos.com/docs/advanced-settings/sso"
               target="_blank"
             >
-              Configuring Keycloak for Authentication
+              {t("setting.sso-section.single-sign-on")}
             </Link>
-          </ListItem>
-        </List>
+          </li>
+        </ul>
       </div>
     </div>
   );
